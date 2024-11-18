@@ -1,0 +1,408 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "cae495aa",
+   "metadata": {
+    "_cell_guid": "b1076dfc-b9ad-4769-8c92-a6c4dae69d19",
+    "_uuid": "8f2839f25d086af736a60e9eeb907d3b93b6e0e5",
+    "execution": {
+     "iopub.execute_input": "2024-11-18T11:29:14.802696Z",
+     "iopub.status.busy": "2024-11-18T11:29:14.802308Z",
+     "iopub.status.idle": "2024-11-18T11:30:30.516500Z",
+     "shell.execute_reply": "2024-11-18T11:30:30.515680Z"
+    },
+    "papermill": {
+     "duration": 75.721185,
+     "end_time": "2024-11-18T11:30:30.518924",
+     "exception": false,
+     "start_time": "2024-11-18T11:29:14.797739",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Downloading https://thor.robots.ox.ac.uk/pets/images.tar.gz to /home/jupyter/mnt/datasets/pets/oxford-iiit-pet/images.tar.gz\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "100%|██████████| 791918971/791918971 [00:46<00:00, 17074569.68it/s]\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Extracting /home/jupyter/mnt/datasets/pets/oxford-iiit-pet/images.tar.gz to /home/jupyter/mnt/datasets/pets/oxford-iiit-pet\n",
+      "Downloading https://thor.robots.ox.ac.uk/pets/annotations.tar.gz to /home/jupyter/mnt/datasets/pets/oxford-iiit-pet/annotations.tar.gz\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "100%|██████████| 19173078/19173078 [00:02<00:00, 7322592.84it/s] \n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Extracting /home/jupyter/mnt/datasets/pets/oxford-iiit-pet/annotations.tar.gz to /home/jupyter/mnt/datasets/pets/oxford-iiit-pet\n"
+     ]
+    }
+   ],
+   "source": [
+    "\n",
+    "import torchvision.transforms as T\n",
+    "from torch.utils.data import DataLoader\n",
+    "from torchvision.datasets import OxfordIIITPet\n",
+    "import torch.nn.functional as F\n",
+    "\n",
+    "# Определяем трансформации\n",
+    "transform = T.Compose([\n",
+    "\n",
+    "    T.Resize((256, 256)),\n",
+    "\n",
+    "    T.ToTensor(),\n",
+    "\n",
+    "])\n",
+    "target_transform = T.Compose(\n",
+    "    [\n",
+    "        T.Resize((256, 256)),\n",
+    "        T.PILToTensor(),\n",
+    "        T.Lambda(lambda x: (x - 1).long())\n",
+    "    ]\n",
+    ")\n",
+    "\n",
+    "# Загружаем датасет\n",
+    "train_dataset = OxfordIIITPet('/home/jupyter/mnt/datasets/pets', transform=transform, download=True, target_transform=target_transform, \n",
+    "                              target_types='segmentation')\n",
+    "valid_dataset = OxfordIIITPet('/home/jupyter/mnt/datasets/pets', transform=transform, download=True, split='test', \n",
+    "                              target_transform=target_transform, target_types='segmentation')\n",
+    "\n",
+    "train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)\n",
+    "valid_loader = DataLoader(valid_dataset, batch_size=16, shuffle=False)\n",
+    "\n",
+    "\n",
+    "import torch\n",
+    "import torch.nn as nn\n",
+    "\n",
+    "class UNet(nn.Module):\n",
+    "    def __init__(self, in_channels, out_channels):\n",
+    "        super(UNet, self).__init__()\n",
+    "        \n",
+    "        # Этапы энкодера\n",
+    "        self.encoder1 = self.conv_block(in_channels, 64)\n",
+    "        self.encoder2 = self.conv_block(64, 128)\n",
+    "        self.encoder3 = self.conv_block(128, 256)\n",
+    "        self.encoder4 = self.conv_block(256, 512)\n",
+    "        self.encoder5 = self.conv_block(512, 1024)\n",
+    "\n",
+    "        # Дополнительные блоки\n",
+    "        #self.encoder6 = self.conv_block(1024, 2048)\n",
+    "        #self.encoder7 = self.conv_block(2048, 4096)\n",
+    "\n",
+    "        # Этапы декодера\n",
+    "        #self.decoder7 = self.upconv_block(4096, 2048)\n",
+    "        #self.decoder6 = self.upconv_block(2048, 1024)\n",
+    "        self.decoder5 = self.upconv_block(1024, 512)\n",
+    "        self.decoder4 = self.upconv_block(512, 256)\n",
+    "        self.decoder3 = self.upconv_block(256, 128)\n",
+    "        self.decoder2 = self.upconv_block(128, 64)\n",
+    "        self.decoder1 = self.upconv_block(64, out_channels)\n",
+    "\n",
+    "\n",
+    "    def conv_block(self, in_channels, out_channels):\n",
+    "        return nn.Sequential(\n",
+    "            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),\n",
+    "            nn.BatchNorm2d(out_channels),\n",
+    "            nn.ReLU(inplace=True),\n",
+    "            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),\n",
+    "            nn.BatchNorm2d(out_channels),\n",
+    "            nn.ReLU(inplace=True)\n",
+    "        )\n",
+    "\n",
+    "    def upconv_block(self, in_channels, out_channels):\n",
+    "        return nn.Sequential(\n",
+    "            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),\n",
+    "            nn.BatchNorm2d(out_channels),\n",
+    "            nn.ReLU(inplace=True)\n",
+    "        )\n",
+    "\n",
+    "    def forward(self, x):\n",
+    "        # Этапы энкодера\n",
+    "        enc1 = self.encoder1(x)  # (N, 64, H, W)\n",
+    "        enc2 = self.encoder2(F.max_pool2d(enc1, kernel_size=2))  # (N, 128, H/2, W/2)\n",
+    "        enc3 = self.encoder3(F.max_pool2d(enc2, kernel_size=2))  # (N, 256, H/4, W/4)\n",
+    "        enc4 = self.encoder4(F.max_pool2d(enc3, kernel_size=2))  # (N, 512, H/8, W/8)\n",
+    "        enc5 = self.encoder5(F.max_pool2d(enc4, kernel_size=2))  # (N, 1024, H/16, W/16)\n",
+    "\n",
+    "        # Дополнительные блоки\n",
+    "        #enc6 = self.encoder6(F.max_pool2d(enc5, kernel_size=2))  # (N, 2048, H/32, W/32)\n",
+    "        #enc7 = self.encoder7(F.max_pool2d(enc6, kernel_size=2))  # (N, 4096, H/64, W/64)\n",
+    "\n",
+    "        # Этапы декодера\n",
+    "        #dec7 = self.decoder7(enc7)  # (N, 2048, H/32, W/32)\n",
+    "        #dec6 = self.decoder6(dec7)  # (N, 1024, H/16, W/16)\n",
+    "        dec5 = self.decoder5(enc5)  # (N, 512, H/8, W/8)\n",
+    "        dec4 = self.decoder4(dec5)  # (N, 256, H/4, W/4)\n",
+    "        dec3 = self.decoder3(dec4)  # (N, 128, H/2, W/2)\n",
+    "        dec2 = self.decoder2(dec3)  # (N, 64, H, W)\n",
+    "        dec1 = self.decoder1(dec2)  # (N, out_channels, H, W)\n",
+    "\n",
+    "        # Интерполяция для подгонки выходного размера под размер масок\n",
+    "        output = F.interpolate(dec1, size=(256, 256), mode='bilinear', align_corners=False)\n",
+    "\n",
+    "        return output \n",
+    "\n",
+    "# Инициализация модели\n",
+    "model = UNet(in_channels=3, out_channels=3)\n",
+    "\n",
+    "\n",
+    "import torch.optim as optim\n",
+    "\n",
+    "device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\n",
+    "model.to(device)\n",
+    "\n",
+    "\n",
+    "# Изменяем функцию потерь на CrossEntropyLoss\n",
+    "criterion = nn.CrossEntropyLoss()  \n",
+    "optimizer = optim.Adam(model.parameters(), lr=0.001)\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "b72a069e",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-11-18T11:30:30.561351Z",
+     "iopub.status.busy": "2024-11-18T11:30:30.560835Z",
+     "iopub.status.idle": "2024-11-18T11:48:14.643587Z",
+     "shell.execute_reply": "2024-11-18T11:48:14.642695Z"
+    },
+    "papermill": {
+     "duration": 1064.107008,
+     "end_time": "2024-11-18T11:48:14.646420",
+     "exception": false,
+     "start_time": "2024-11-18T11:30:30.539412",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Epoch [1/20], Loss: 0.7896\n",
+      "Epoch [2/20], Loss: 0.7640\n",
+      "Epoch [3/20], Loss: 0.6156\n",
+      "Epoch [4/20], Loss: 0.4983\n",
+      "Epoch [5/20], Loss: 0.4803\n",
+      "Epoch [6/20], Loss: 0.3854\n",
+      "Epoch [7/20], Loss: 0.4474\n",
+      "Epoch [8/20], Loss: 0.3281\n",
+      "Epoch [9/20], Loss: 0.3523\n",
+      "Epoch [10/20], Loss: 0.3657\n",
+      "Epoch [11/20], Loss: 0.3312\n",
+      "Epoch [12/20], Loss: 0.2857\n",
+      "Epoch [13/20], Loss: 0.2961\n",
+      "Epoch [14/20], Loss: 0.2884\n",
+      "Epoch [15/20], Loss: 0.2865\n",
+      "Epoch [16/20], Loss: 0.2424\n",
+      "Epoch [17/20], Loss: 0.2174\n",
+      "Epoch [18/20], Loss: 0.2406\n",
+      "Epoch [19/20], Loss: 0.2639\n",
+      "Epoch [20/20], Loss: 0.2164\n",
+      "Pixel Accuracy: 0.8862\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Обучение\n",
+    "\n",
+    "num_epochs = 20\n",
+    "for epoch in range(num_epochs):\n",
+    "    model.train()\n",
+    "    for images, masks in train_loader:\n",
+    "        images, masks = images.to(device), masks.to(device)\n",
+    "\n",
+    "        optimizer.zero_grad()\n",
+    "        outputs = model(images)\n",
+    "        loss = criterion(outputs, masks.squeeze(1))  # Добавляем размерность для масок\n",
+    "        loss.backward()\n",
+    "        optimizer.step()\n",
+    "\n",
+    "    print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')\n",
+    "\n",
+    "\n",
+    "\n",
+    "# Оценка точности\n",
+    "model.eval()\n",
+    "total_correct = 0\n",
+    "total_pixels = 0\n",
+    "\n",
+    "with torch.no_grad():\n",
+    "    for images, masks in valid_loader:\n",
+    "        images = images.float().to(device)  # Приводим к float\n",
+    "        masks = masks.to(device)\n",
+    "        outputs = model(images)  \n",
+    "        \n",
+    "        # Преобразуем предсказания в метки классов\n",
+    "        preds = torch.argmax(outputs, dim=1) \n",
+    "        \n",
+    "        total_correct += (preds == masks.squeeze(1)).sum().item()\n",
+    "        total_pixels += masks.numel()\n",
+    "\n",
+    "accuracy = total_correct / total_pixels\n",
+    "print(f'Pixel Accuracy: {accuracy:.4f}')\n",
+    "\n",
+    "\n",
+    "import numpy as np\n",
+    "\n",
+    "np.random.seed(100)\n",
+    "idx = np.random.randint(len(valid_dataset), size=200)\n",
+    "\n",
+    "\n",
+    "predictions = []\n",
+    "model.eval()\n",
+    "with torch.no_grad():\n",
+    "    for i in idx:\n",
+    "        image, _ = valid_dataset[i]\n",
+    "        image = image.unsqueeze(0).float().to(device)  # Приводим к float и добавляем batch размерность\n",
+    "        output = model(image)  # [1, 3, 256, 256]\n",
+    "        pred = torch.argmax(output, dim=1, keepdim=False)  # [1, 1, 256, 256]\n",
+    "        predictions.append(pred.cpu().numpy())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "fedf69ba",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-11-18T11:48:14.692944Z",
+     "iopub.status.busy": "2024-11-18T11:48:14.692558Z",
+     "iopub.status.idle": "2024-11-18T11:48:18.304495Z",
+     "shell.execute_reply": "2024-11-18T11:48:18.303554Z"
+    },
+    "papermill": {
+     "duration": 3.638235,
+     "end_time": "2024-11-18T11:48:18.306590",
+     "exception": false,
+     "start_time": "2024-11-18T11:48:14.668355",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "/tmp/ipykernel_23/563403249.py:1: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /usr/local/src/pytorch/torch/csrc/utils/tensor_new.cpp:278.)\n",
+      "  predictions_tensor = torch.tensor(predictions)\n"
+     ]
+    }
+   ],
+   "source": [
+    " predictions_tensor = torch.tensor(predictions)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "1c47ddc6",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-11-18T11:48:18.351965Z",
+     "iopub.status.busy": "2024-11-18T11:48:18.351573Z",
+     "iopub.status.idle": "2024-11-18T11:48:18.386313Z",
+     "shell.execute_reply": "2024-11-18T11:48:18.385301Z"
+    },
+    "papermill": {
+     "duration": 0.060356,
+     "end_time": "2024-11-18T11:48:18.389051",
+     "exception": false,
+     "start_time": "2024-11-18T11:48:18.328695",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "# Сохраняем предсказания\n",
+    "torch.save(predictions_tensor.to(torch.uint8), 'predictions.pt')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "57b9205c",
+   "metadata": {
+    "papermill": {
+     "duration": 0.021609,
+     "end_time": "2024-11-18T11:48:18.432596",
+     "exception": false,
+     "start_time": "2024-11-18T11:48:18.410987",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kaggle": {
+   "accelerator": "gpu",
+   "dataSources": [],
+   "dockerImageVersionId": 30787,
+   "isGpuEnabled": true,
+   "isInternetEnabled": true,
+   "language": "python",
+   "sourceType": "notebook"
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.10.14"
+  },
+  "papermill": {
+   "default_parameters": {},
+   "duration": 1147.889986,
+   "end_time": "2024-11-18T11:48:19.979321",
+   "environment_variables": {},
+   "exception": null,
+   "input_path": "__notebook__.ipynb",
+   "output_path": "__notebook__.ipynb",
+   "parameters": {},
+   "start_time": "2024-11-18T11:29:12.089335",
+   "version": "2.6.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
